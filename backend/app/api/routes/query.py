@@ -63,7 +63,7 @@ class QueryRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=2000)
     document_types: Optional[list] = None
     document_id: Optional[str] = None
-    top_k: int = Field(default=5, ge=1, le=20)
+    top_k: int = Field(default=5, ge=1, le=100)
     use_reranker: bool = True
     # Retrieve-only mode: run retrieval + rerank, return citations, but SKIP the
     # Gemma synthesis call. Used by Data Manthan's RAVEN node — the platform's
@@ -262,6 +262,13 @@ def _try_structured_query(req: "QueryRequest") -> Optional[dict]:
     so callers can treat this as a pure additive best-effort step."""
     if not settings.STRUCTURED_QUERY_ENABLED:
         return None
+    # The structured engine has no document allow-list: for a scoped caller it
+    # could compute exact facts from documents outside the caller's scope.
+    # Allow it only when the call is pinned to one document inside the scope.
+    if req.allowed_doc_ids is not None and (
+        not req.document_id or str(req.document_id) not in {str(d) for d in req.allowed_doc_ids}
+    ):
+        return None
     try:
         from app.services.table_query_engine import try_structured_query
         return try_structured_query(
@@ -452,7 +459,7 @@ async def query_documents(req: QueryRequest):
     tracing.reset_timings()
 
     # Short-circuit: conversational / off-topic queries must not trigger retrieval.
-    if _is_conversational(req.query):
+    if req.synthesize and _is_conversational(req.query):
         conv_answer = await synthesis_service.synthesize_conversational(req.query)
         return QueryResponse(
             answer=conv_answer,

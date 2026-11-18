@@ -321,16 +321,16 @@ def _catalogue_for(document_id: str) -> dict:
                 cur.execute(
                     "SELECT min(r.record_type), count(*) FROM document_records r "
                     "JOIN document_registry d ON d.id = r.document_id "
-                    "WHERE d.is_active AND d.domain_id IS NOT DISTINCT FROM "
-                    "  (SELECT domain_id FROM document_registry WHERE id = %s) "
+                    "WHERE d.is_active AND d.collection_id IS NOT DISTINCT FROM "
+                    "  (SELECT collection_id FROM document_registry WHERE id = %s) "
                     "GROUP BY r.record_type_key ORDER BY 2 DESC LIMIT 30", (document_id,))
                 types = [r[0] for r in cur.fetchall()]
                 cur.execute(
                     "SELECT k, count(*) FROM document_records r "
                     "JOIN document_registry d ON d.id = r.document_id "
                     "CROSS JOIN LATERAL jsonb_object_keys(r.fields) k "
-                    "WHERE d.is_active AND d.domain_id IS NOT DISTINCT FROM "
-                    "  (SELECT domain_id FROM document_registry WHERE id = %s) "
+                    "WHERE d.is_active AND d.collection_id IS NOT DISTINCT FROM "
+                    "  (SELECT collection_id FROM document_registry WHERE id = %s) "
                     "GROUP BY k ORDER BY 2 DESC LIMIT 60", (document_id,))
                 fields = [r[0] for r in cur.fetchall()]
     except Exception as exc:

@@ -1,7 +1,9 @@
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Query, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+
+from app.api.auth import Principal, check_document_access, effective_collections, require_key
 
 from app.config import settings
 from app.core.exceptions import DocumentNotFoundError
@@ -18,10 +20,20 @@ def list_documents(
     limit: int = Query(20, ge=1, le=100),
     doc_status: Optional[str] = Query(None, alias="status"),
     document_type: Optional[str] = Query(None),
+    collection_id: Optional[int] = Query(None),
+    include_inactive: bool = Query(False, description="Also list superseded versions."),
+    principal: Principal = Depends(require_key),
 ):
     offset = (page - 1) * limit
     conditions = []
     params: list = []
+
+    collections = effective_collections(principal, [collection_id] if collection_id else None)
+    if collections is not None:
+        conditions.append("collection_id = ANY(%s)")
+        params.append(collections)
+    if not include_inactive:
+        conditions.append("is_active")
 
     if doc_status:
         conditions.append("status = %s")
@@ -88,7 +100,8 @@ def list_documents(
 
 
 @router.get("/{document_id}", response_model=DocumentDetail)
-def get_document(document_id: str):
+def get_document(document_id: str, principal: Principal = Depends(require_key)):
+    check_document_access(principal, document_id)
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -145,8 +158,9 @@ def get_document(document_id: str):
 
 
 @router.get("/{document_id}/page-stats")
-def get_page_stats(document_id: str):
+def get_page_stats(document_id: str, principal: Principal = Depends(require_key)):
     """Aggregate per-page stats from all chunk stores for a document."""
+    check_document_access(principal, document_id)
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -255,13 +269,14 @@ def _image_metrics(items: list) -> dict:
 
 
 @router.get("/{document_id}/images")
-def get_document_images(document_id: str):
+def get_document_images(document_id: str, principal: Principal = Depends(require_key)):
     """All extracted images for a document with signed URLs + structured_content/OCR.
     Powers the Images stage detail panel (thumbnails the user can inspect).
     structured_content is the primary knowledge column (replaces the old caption column);
     caption key is kept in the response for frontend backward-compatibility.
     Also returns pre-VLM filter tracking fields (processing_status, skip_reason,
     filter_stage, image_type) plus an aggregate `metrics` object."""
+    check_document_access(principal, document_id)
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -299,13 +314,14 @@ def get_document_images(document_id: str):
 
 
 @router.delete("/{document_id}", status_code=status.HTTP_200_OK)
-def delete_document(document_id: str):
+def delete_document(document_id: str, principal: Principal = Depends(require_key)):
     """
     Cascade deletes all store records (FK ON DELETE CASCADE handles child rows).
     Also removes ALL files for this document from Supabase Storage:
     the original PDF and every image/table-crop asset stored in image_store.
     Also clears Neo4j graph data.
     """
+    check_document_access(principal, document_id)
     from app.services.supabase_storage import delete_files
     from app.services import graph_service
 
@@ -382,11 +398,13 @@ def get_document_chunks(
     store: str = Query("vector", pattern="^(vector|table|clause|research)$"),
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
+    principal: Principal = Depends(require_key),
 ):
     """
     Return paginated chunks from a specific store for a document.
     store: vector | table | clause | research
     """
+    check_document_access(principal, document_id)
     offset = (page - 1) * limit
 
     store_map = {

@@ -1,10 +1,12 @@
-﻿import hashlib
+import hashlib
 import logging
 import os
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, File, Form, UploadFile, HTTPException, status, Body
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, UploadFile, status
+
+from app.api.auth import Principal, check_document_access, require_admin, require_key
 
 from app.config import settings
 from app.core.exceptions import FileTooLargeError, InvalidFileTypeError, JobNotFoundError
@@ -98,7 +100,7 @@ _SUPPORTED_TYPES_MSG = "PDF, DOCX, PPTX, XLSX, HTML, Markdown, TXT, CSV"
 
 
 # ── Document versioning (Part A, docs/EMBEDDING_MODEL_SWAP.md) ──────────────
-# Identity of a document = (original_filename, domain_id). Fingerprint = SHA-256 of
+# Identity of a document = (original_filename, collection_id). Fingerprint = SHA-256 of
 # the bytes, stored in document_registry.file_hash. Decided at UPLOAD time only —
 # reprocess_document() rebuilds the same id and never goes through this.
 
@@ -106,10 +108,10 @@ def _content_hash(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
 
 
-def _find_active_version(filename: str, domain_id: Optional[int]) -> Optional[dict]:
+def _find_active_version(filename: str, collection_id: Optional[int]) -> Optional[dict]:
     """The currently active, completed version for this identity, or None.
-    No domain → no identity check (legacy callers), logged for visibility."""
-    if domain_id is None:
+    No collection → no identity check, logged for visibility."""
+    if collection_id is None:
         return None
     with get_db() as conn:
         with conn.cursor() as cur:
@@ -117,12 +119,12 @@ def _find_active_version(filename: str, domain_id: Optional[int]) -> Optional[di
                 """
                 SELECT id, file_hash, version_no
                 FROM document_registry
-                WHERE original_filename = %s AND domain_id = %s
+                WHERE original_filename = %s AND collection_id = %s
                   AND is_active AND status = 'completed'
                 ORDER BY version_no DESC NULLS LAST, created_at DESC
                 LIMIT 1
                 """,
-                (filename, domain_id),
+                (filename, collection_id),
             )
             row = cur.fetchone()
     if not row:
@@ -146,7 +148,7 @@ def _register_and_dispatch(
     filename: str,
     content_type: str,
     pipeline_run_id: Optional[str] = None,
-    domain_id: Optional[int] = None,
+    collection_id: Optional[int] = None,
 ) -> tuple[str, Optional[str], dict]:
     """
     Persist a supported document, register it (+ ingestion job), dispatch the
@@ -156,12 +158,12 @@ def _register_and_dispatch(
     document_id is the EXISTING active version. Caller validates type/size first.
     """
     content_hash = _content_hash(content)
-    existing = _find_active_version(filename, domain_id)
+    existing = _find_active_version(filename, collection_id)
     action = resolve_upload_action(existing, content_hash)
 
     if action == "already_current":
-        logger.info("Upload of %r (domain %s) is byte-identical to active v%s %s — skipped",
-                    filename, domain_id, existing["version_no"], existing["id"])
+        logger.info("Upload of %r (collection %s) is byte-identical to active v%s %s — skipped",
+                    filename, collection_id, existing["version_no"], existing["id"])
         return existing["id"], None, {"action": action, "version_no": existing["version_no"],
                                        "supersedes": None}
 
@@ -170,11 +172,11 @@ def _register_and_dispatch(
     if action == "new_version":
         version_no = int(existing["version_no"]) + 1
         supersedes = existing["id"]
-        logger.info("Upload of %r (domain %s) differs from active v%s — registering v%s "
+        logger.info("Upload of %r (collection %s) differs from active v%s — registering v%s "
                     "(supersedes %s; flip happens on completion)",
-                    filename, domain_id, existing["version_no"], version_no, supersedes)
-    elif domain_id is None:
-        logger.info("Upload of %r without domain_id — versioning identity check skipped", filename)
+                    filename, collection_id, existing["version_no"], version_no, supersedes)
+    elif collection_id is None:
+        logger.info("Upload of %r without collection — versioning identity check skipped", filename)
 
     # ── Upload to Supabase Storage ────────────────────────────
     ext = _ext_for(filename, content_type)
@@ -202,12 +204,12 @@ def _register_and_dispatch(
                 INSERT INTO document_registry
                     (id, filename, original_filename, file_size_bytes, mime_type,
                      storage_path, storage_bucket, status, pipeline_run_id,
-                     file_hash, version_no, supersedes, is_active)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, 'uploaded', %s, %s, %s, %s, true)
+                     file_hash, version_no, supersedes, is_active, collection_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, 'uploaded', %s, %s, %s, %s, true, %s)
                 """,
                 (document_id, safe_name, filename, len(content), content_type,
                  storage_path, bucket, pipeline_run_id,
-                 content_hash, version_no, supersedes),
+                 content_hash, version_no, supersedes, collection_id),
             )
             cur.execute(
                 """
@@ -256,13 +258,14 @@ def _record_failed_file(
     file_size: int,
     error: str,
     pipeline_run_id: Optional[str] = None,
+    collection_id: Optional[int] = None,
 ) -> str:
     """
     Register a rejected file (wrong type / too large) as a failed document so it
     still appears in the pipeline run's counts and history. Returns document_id.
     """
     document_id = str(uuid.uuid4())
-    # storage_path is NOT NULL in the app schema (tracopp_v2): a rejected file has no
+    # storage_path is NOT NULL: a rejected file has no
     # object in storage, so it gets a placeholder. Without it this INSERT raised and
     # took the WHOLE batch down with a 500 (found 9 Oct 2026 on a crawl with two .txt).
     with get_db() as conn:
@@ -271,44 +274,14 @@ def _record_failed_file(
                 """
                 INSERT INTO document_registry
                     (id, filename, original_filename, file_size_bytes, mime_type,
-                     storage_path, status, error_stage, error_message, pipeline_run_id)
-                VALUES (%s, %s, %s, %s, %s, %s, 'failed', 'validation', %s, %s)
+                     storage_path, status, error_stage, error_message, pipeline_run_id, collection_id)
+                VALUES (%s, %s, %s, %s, %s, %s, 'failed', 'validation', %s, %s, %s)
                 """,
                 (document_id, filename, filename, file_size,
-                 content_type or "unknown", f"rejected/{document_id}", error, pipeline_run_id),
+                 content_type or "unknown", f"rejected/{document_id}", error, pipeline_run_id,
+                 collection_id),
             )
     return document_id
-
-
-# ── Single-file upload (legacy / backward compatible) ──────────────────────
-@router.post("/upload", response_model=UploadResponse, status_code=status.HTTP_202_ACCEPTED)
-async def upload_document(file: UploadFile = File(...)):
-    """Accept a single supported document, register it, and dispatch the Celery pipeline task."""
-    fname = file.filename or "document"
-    if not _is_allowed(fname, file.content_type or ""):
-        raise InvalidFileTypeError(file.content_type or "unknown")
-
-    content = await file.read()
-    file_size = len(content)
-    if file_size > settings.max_upload_bytes:
-        size_mb = file_size / (1024 * 1024)
-        raise FileTooLargeError(size_mb, settings.MAX_UPLOAD_SIZE_MB)
-
-    try:
-        document_id, job_id, _ver = _register_and_dispatch(
-            content, fname, file.content_type
-        )
-    except Exception:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to start ingestion pipeline",
-        )
-
-    return UploadResponse(
-        document_id=document_id,
-        job_id=job_id or "",
-        filename=fname,
-    )
 
 
 # ── Pipeline run: batch upload with taxonomy metadata ──────────────────────
@@ -316,33 +289,36 @@ async def upload_document(file: UploadFile = File(...)):
 async def create_pipeline(
     name: str = Form(...),
     files: list[UploadFile] = File(...),
+    collection_id: int = Form(..., description="Collection the documents belong to."),
     description: Optional[str] = Form(None),
-    source: str = Form("local"),
-    domain: Optional[str] = Form(None),
-    sub_domain: Optional[str] = Form(None),
-    category: Optional[str] = Form(None),
-    sub_category: Optional[str] = Form(None),
-    domain_id: Optional[int] = Form(None),   # app-schema domain id → versioning identity
+    source: str = Form("api"),
+    principal: Principal = Depends(require_key),
 ):
     """
     Create a pipeline run and ingest a batch of files under it.
     Valid PDFs are dispatched to the Celery pipeline; unsupported or oversized
     files are recorded as failed so they still appear in the run's counts.
-    A file byte-identical to the active version of the same (filename, domain_id)
+    A file byte-identical to the active version of the same (filename, collection_id)
     is reported as 'already_current' and neither stored nor dispatched; a changed
     file becomes a new version that supersedes the old one on completion.
     """
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
+    if not principal.can_use_collection(collection_id):
+        raise HTTPException(status_code=403, detail=f"API key has no access to collection {collection_id}")
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT is_active FROM collections WHERE id = %s", (collection_id,))
+            row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Collection {collection_id} not found")
+    if not row[0]:
+        raise HTTPException(status_code=409, detail=f"Collection {collection_id} is inactive")
 
     run_id = pipeline_runs.create_run(
         name=name.strip(),
         source=source,
         description=description,
-        domain=domain,
-        sub_domain=sub_domain,
-        category=category,
-        sub_category=sub_category,
     )
 
     results: list[PipelineFileResult] = []
@@ -360,7 +336,7 @@ async def create_pipeline(
                 f"Unsupported file type: {file.content_type or 'unknown'}. "
                 f"Accepted: {_SUPPORTED_TYPES_MSG}"
             )
-            doc_id = _record_failed_file(fname, file.content_type, file_size, err, run_id)
+            doc_id = _record_failed_file(fname, file.content_type, file_size, err, run_id, collection_id)
             results.append(PipelineFileResult(document_id=doc_id, filename=fname, status="failed", error=err))
             failed += 1
             continue
@@ -368,7 +344,7 @@ async def create_pipeline(
         # Validate size
         if file_size > settings.max_upload_bytes:
             err = f"File exceeds {settings.MAX_UPLOAD_SIZE_MB}MB limit"
-            doc_id = _record_failed_file(fname, file.content_type, file_size, err, run_id)
+            doc_id = _record_failed_file(fname, file.content_type, file_size, err, run_id, collection_id)
             results.append(PipelineFileResult(document_id=doc_id, filename=fname, status="failed", error=err))
             failed += 1
             continue
@@ -376,7 +352,7 @@ async def create_pipeline(
         # Dispatch (or skip when byte-identical to the active version)
         try:
             doc_id, job_id, ver = _register_and_dispatch(content, fname, file.content_type, run_id,
-                                                         domain_id=domain_id)
+                                                         collection_id=collection_id)
             if ver["action"] == "already_current":
                 results.append(PipelineFileResult(
                     document_id=doc_id, filename=fname, status="already_current",
@@ -406,7 +382,7 @@ async def create_pipeline(
     )
 
 
-@router.get("/pipelines", response_model=PipelineRunListResponse)
+@router.get("/pipelines", response_model=PipelineRunListResponse, dependencies=[Depends(require_admin)])
 def list_pipelines(page: int = 1, limit: int = 20):
     """List pipeline runs (newest first) for the run-history table."""
     page = max(1, page)
@@ -424,7 +400,7 @@ def list_pipelines(page: int = 1, limit: int = 20):
     )
 
 
-@router.get("/pipelines/{run_id}", response_model=PipelineDetail)
+@router.get("/pipelines/{run_id}", response_model=PipelineDetail, dependencies=[Depends(require_admin)])
 def get_pipeline(run_id: str):
     """Full pipeline detail — overview + per-document stage timings."""
     data = pipeline_runs.get_run(run_id)
@@ -434,7 +410,7 @@ def get_pipeline(run_id: str):
     return PipelineDetail(**data, documents=docs)
 
 
-@router.patch("/pipelines/{run_id}", status_code=status.HTTP_200_OK)
+@router.patch("/pipelines/{run_id}", status_code=status.HTTP_200_OK, dependencies=[Depends(require_admin)])
 def rename_pipeline(run_id: str, body: dict = Body(...)):
     """Rename a pipeline run."""
     name = (body.get("name") or "").strip()
@@ -446,7 +422,7 @@ def rename_pipeline(run_id: str, body: dict = Body(...)):
     return {"run_id": run_id, "name": name}
 
 
-@router.post("/documents/{document_id}/reprocess", status_code=status.HTTP_200_OK)
+@router.post("/documents/{document_id}/reprocess", status_code=status.HTTP_200_OK, dependencies=[Depends(require_admin)])
 def reprocess_document(document_id: str):
     """Re-dispatch the ingestion pipeline for an existing document inside a new pipeline run.
 
@@ -524,7 +500,7 @@ def reprocess_document(document_id: str):
     return {"document_id": document_id, "job_id": job_id, "pipeline_run_id": run_id, "status": "queued"}
 
 
-@router.post("/pipelines/{run_id}/cancel", status_code=status.HTTP_200_OK)
+@router.post("/pipelines/{run_id}/cancel", status_code=status.HTTP_200_OK, dependencies=[Depends(require_admin)])
 def cancel_pipeline(run_id: str):
     """Stop a pipeline run (9 Oct 2026). Queued files are revoked and marked failed/cancelled;
     the file the worker is on right now finishes its current stage and then stops (the
@@ -583,14 +559,14 @@ def cancel_pipeline(run_id: str):
     return {"run_id": run_id, "cancelled_jobs": len(jobs), "status": "cancelled"}
 
 
-@router.delete("/pipelines", status_code=status.HTTP_200_OK)
+@router.delete("/pipelines", status_code=status.HTTP_200_OK, dependencies=[Depends(require_admin)])
 def clear_all_pipelines():
     """Delete all pipeline runs. Documents and their chunks are preserved."""
     deleted = pipeline_runs.delete_all_runs()
     return {"deleted": deleted}
 
 
-@router.delete("/pipelines/{run_id}", status_code=status.HTTP_200_OK)
+@router.delete("/pipelines/{run_id}", status_code=status.HTTP_200_OK, dependencies=[Depends(require_admin)])
 def delete_pipeline(run_id: str):
     """Delete a pipeline run. Documents and their Supabase Storage files are preserved."""
     unlinked = pipeline_runs.delete_run(run_id)
@@ -601,7 +577,7 @@ def delete_pipeline(run_id: str):
 
 
 @router.get("/status/{job_id}", response_model=JobStatusResponse)
-def get_job_status(job_id: str):
+def get_job_status(job_id: str, principal: Principal = Depends(require_key)):
     """Poll the ingestion pipeline progress for a given job_id."""
     with get_db() as conn:
         with conn.cursor() as cur:
@@ -619,6 +595,10 @@ def get_job_status(job_id: str):
             row = cur.fetchone()
 
     if not row:
+        raise JobNotFoundError(job_id)
+    try:
+        check_document_access(principal, str(row[1]))
+    except HTTPException:
         raise JobNotFoundError(job_id)
 
     return JobStatusResponse(

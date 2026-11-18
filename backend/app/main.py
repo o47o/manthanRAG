@@ -3,13 +3,14 @@ import concurrent.futures
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.core.logging import setup_logging
 from app.core.tracing import setup_tracing
-from app.api.routes import health, ingestion, documents, query, chats, graph as graph_routes
+from app.api.auth import require_admin
+from app.api.routes import admin, documents, health, ingestion, query, retrieve, graph as graph_routes
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -110,8 +111,12 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="MANTHAN RAG API",
-    description="Enterprise Agentic RAG — ingestion pipeline for multi-store document intelligence",
+    title="Manthan RAG API",
+    description=(
+        "Self-hosted retrieval service. Ingest documents into collections, then call "
+        "POST /api/v1/retrieve to get the top-N passages for a question. Authenticate "
+        "with an API key in the X-API-Key header."
+    ),
     version="1.0.0",
     docs_url="/api/docs",
     redoc_url="/api/redoc",
@@ -128,14 +133,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Public (no key): health only.
 app.include_router(health.router, prefix="/api/v1")
+# Customer API (any valid key, scoped to the key's collections inside each route).
+app.include_router(retrieve.router, prefix="/api/v1", tags=["retrieve"])
 app.include_router(ingestion.router, prefix="/api/v1/ingest", tags=["ingestion"])
 app.include_router(documents.router, prefix="/api/v1/documents", tags=["documents"])
-app.include_router(query.router, prefix="/api/v1", tags=["query"])
-app.include_router(chats.router, prefix="/api/v1/chats", tags=["chats"])
-app.include_router(graph_routes.router, prefix="/api/v1/graph", tags=["graph"])
+# Admin key only: key/collection management, raw engine query (admin UI), graph tools.
+app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
+app.include_router(query.router, prefix="/api/v1/admin", tags=["admin"],
+                   dependencies=[Depends(require_admin)])
+app.include_router(graph_routes.router, prefix="/api/v1/graph", tags=["admin"],
+                   dependencies=[Depends(require_admin)])
 
 
 @app.get("/", include_in_schema=False)
 def root():
-    return {"service": "MANTHAN RAG API", "version": "1.0.0", "docs": "/api/docs"}
+    return {"service": "Manthan RAG API", "version": "1.0.0", "docs": "/api/docs"}

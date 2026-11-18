@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     DB_SSLMODE: str = "require"
     # Max connections per process (API and each worker). Keep small on a shared server.
     DB_POOL_MAX: int = 5
+    # Upper bound for /api/v1/retrieve top_k.
+    RETRIEVE_MAX_TOP_K: int = 50
     # backend/.env carries the DB connection only as DATABASE_URL (used directly by
     # backend/ARIA/SAGE) — SUPABASE_HOST/PORT/USER/PASSWORD/DB above are never set
     # there. Declared here so the fallback validator below can parse it.
