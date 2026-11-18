@@ -1,0 +1,13 @@
+# Development image for THIS server only: the Manthan platform's RAG image already holds the
+# exact same Python packages (backend/requirements.txt is identical), so this adds only our code
+# on top of it instead of a second 3 GB install. Customer images use backend/Dockerfile.
+ARG BASE_IMAGE=datamind-rag:latest
+FROM ${BASE_IMAGE}
+
+ENV HF_HOME=/models HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+WORKDIR /srv/manthan-rag
+COPY backend/ /srv/manthan-rag/
+RUN rm -f /srv/manthan-rag/.env && mkdir -p /srv/manthan-rag/docling_models /srv/manthan-rag/local_storage
+
+EXPOSE 8000
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

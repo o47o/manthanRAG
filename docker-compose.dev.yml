@@ -1,0 +1,41 @@
+# Development on the shared server (next to the production Manthan platform).
+#   sudo docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build api worker redis
+#
+# - Image: our code on top of the platform's RAG image (same packages) — docker/Dockerfile.dev.
+# - Models: the platform's model volumes, mounted READ-ONLY (no second 5 GB download, nothing written).
+# - Memory caps keep our containers from pushing the production containers into the OOM killer.
+# - API only on 127.0.0.1:8100.
+x-dev: &dev
+  build:
+    context: .
+    dockerfile: docker/Dockerfile.dev
+  image: manthan-rag:dev
+  working_dir: /srv/manthan-rag
+  volumes:
+    - platform_hf_models:/models:ro
+    - platform_docling_models:/srv/manthan-rag/docling_models:ro
+    - storage:/srv/manthan-rag/local_storage
+
+services:
+  api:
+    <<: *dev
+    ports: !override
+      - "127.0.0.1:8100:8000"
+    mem_limit: 2500m
+  worker:
+    <<: *dev
+    command: ["celery", "-A", "app.core.background_tasks", "worker", "--loglevel=info",
+              "-Q", "ingestion,parse,embed,graph", "--concurrency=1"]
+    mem_limit: 3500m
+  migrate:
+    <<: *dev
+  models:
+    <<: *dev
+
+volumes:
+  platform_hf_models:
+    external: true
+    name: datamind_hf_models
+  platform_docling_models:
+    external: true
+    name: datamind_docling_models
