@@ -36,6 +36,12 @@ router = APIRouter()
 
 
 class RetrieveRequest(BaseModel):
+    # Shown pre-filled by "Try it out" in /api/docs (otherwise Swagger sends placeholder values
+    # such as collection_ids [0] and document_ids ["string"], which fail the scope check).
+    model_config = {"json_schema_extra": {"examples": [
+        {"query": "What are the criteria for approving a new vendor?", "top_k": 5},
+    ]}}
+
     query: str = Field(..., min_length=1, max_length=2000)
     top_k: int = Field(default=10, ge=1, description="Passages to return in ranked mode (capped by RETRIEVE_MAX_TOP_K).")
     collection_ids: Optional[list[int]] = Field(
