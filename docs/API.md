@@ -79,10 +79,31 @@ A document outside the key's scope answers `404`.
   "collection_ids": [1],
   "document_ids": null,
   "document_types": null,
+  "auto_scope": true,
+  "full_document": true,
+  "report_family": null,
+  "add_related_tables": true,
   "use_reranker": true,
   "include_file_urls": false
 }
 ```
+
+### Question scope (`auto_scope`, on by default)
+
+When the question names something precise, the search is first narrowed to the matching documents. This always happens inside the key's scope. The filters are applied in this order:
+
+1. A report or document id, for example `SHP-2025-81218`, matched against the file name or title.
+2. A document name, when most of its name words appear in the question. Example: "the Global Price Book".
+3. A period: `Q2 2026`, `FY2025`, `May 2026` or `H1 2026`. These are tagged on the documents at ingestion.
+4. A document type: SOP or procedure, policy, report, invoice or agreement.
+
+A filter that matches no document is dropped. `scope.fallbacks` lists it, and `scope.note` gives one sentence for the user.
+
+**Whole document.** When the question names a short document (up to 2 documents, about 22,000 characters), `mode` is `full_document`. All of its text, tables and clauses come back in page order instead of the top-k passages.
+
+**"Which report?"** A period can still leave several kinds of report, for example a "Q3 2026" question when there is a forecast, a scorecard and a performance report. Then `scope.choices` lists them as `[{"label", "documents"}]`. The hits still come from all of them. The calling app can ask its user which one they mean, then send the same question with `report_family` set to the chosen label.
+
+**Related tables.** Tables cut off by chunking are replaced with the complete table. Tables that a found passage refers to but the search missed are added right after that passage, with `"added": "companion_table"` and `score: null`.
 
 Response:
 
@@ -107,6 +128,9 @@ Response:
       "file_url": null
     }
   ],
+  "mode": "ranked",
+  "scope": {"applied": ["period 2026-Q2"], "fallbacks": [], "note": null,
+            "documents": ["Q2_Report.pdf"], "report_family": null, "choices": []},
   "total_candidates": 48,
   "stores_searched": ["table", "vector"],
   "structured_result": null,
