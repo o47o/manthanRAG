@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Secrets and local config
+.env
+*.env
+!.env.example
+
+# Data and model caches (mounted volumes, never in git)
+backend/local_storage/
+backend/docling_models/
+models/
+logs/
+
+# Frontend
+admin-ui/node_modules/
+admin-ui/.next/
+admin-ui/out/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
