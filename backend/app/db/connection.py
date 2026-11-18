@@ -15,7 +15,8 @@ _pool: psycopg2.pool.ThreadedConnectionPool | None = None
 # Semaphore mirrors maxconn so getconn() never blocks forever.
 # Callers wait at most POOL_TIMEOUT seconds before receiving a 503.
 _pool_sem: threading.Semaphore | None = None
-POOL_MAXCONN = 20
+# Small by default: the dev database server is shared with other apps.
+POOL_MAXCONN = max(2, settings.DB_POOL_MAX)
 POOL_TIMEOUT = 8  # seconds
 
 

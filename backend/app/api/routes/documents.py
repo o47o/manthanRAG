@@ -3,6 +3,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Query, HTTPException, status
 
+from app.config import settings
 from app.core.exceptions import DocumentNotFoundError
 from app.db.connection import get_db
 from app.models.responses import DocumentDetail, DocumentListResponse, DocumentSummary
@@ -279,7 +280,7 @@ def get_document_images(document_id: str):
         image_url = None
         if r[3]:
             try:
-                image_url = create_signed_url(r[4] or "rag-documents", r[3], expires_in=3600)
+                image_url = create_signed_url(r[4] or settings.SUPABASE_STORAGE_BUCKET, r[3], expires_in=3600)
             except Exception as exc:
                 logger.warning("signed url failed for image %s: %s", r[3], exc)
         items.append({
@@ -327,7 +328,7 @@ def delete_document(document_id: str):
 
     # Delete original PDF from bucket
     if row[1]:
-        _try_delete_from_storage(row[2] or "rag-documents", row[1])
+        _try_delete_from_storage(row[2] or settings.SUPABASE_STORAGE_BUCKET, row[1])
 
     # Delete image and table-crop assets from bucket (grouped by bucket)
     if image_rows:

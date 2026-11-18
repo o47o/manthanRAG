@@ -1,14 +1,24 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import field_validator, model_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from urllib.parse import quote_plus, unquote, urlparse
 from pathlib import Path
 import json
+import os
 
-# Single source of truth: Data-ManthanAI_V2/backend/.env — ALL services
-# (backend, agents, this engine) read the same file. No .env lives under
-# Agents/RAG. Path anchored to this file: app → backend → RAG → Agents → repo root.
-_REPO_ROOT = Path(__file__).resolve().parents[4]
-MANTHAN_ENV_FILE = _REPO_ROOT / "backend" / ".env"
+# Standalone service: config comes from backend/.env next to this package
+# (override the path with RAG_ENV_FILE). Process environment variables win
+# over the file, so containers can pass everything as env vars instead.
+_BACKEND_DIR = Path(__file__).resolve().parents[1]
+RAG_ENV_FILE = Path(os.environ.get("RAG_ENV_FILE") or (_BACKEND_DIR / ".env"))
+
+# Schemas this service must never write to (they belong to the Manthan
+# platform, which may share the same database server).
+_FORBIDDEN_SCHEMAS = {"tracopp", "tracopp_v2", "public"}
+
+
+def _alias(*names: str) -> AliasChoices:
+    """Accept the neutral product name first, then the historical engine name."""
+    return AliasChoices(*names)
 
 
 class Settings(BaseSettings):
@@ -18,21 +28,23 @@ class Settings(BaseSettings):
     SUPABASE_DB: str = ""
     SUPABASE_USER: str = ""
     SUPABASE_PASSWORD: str = ""
-    SUPABASE_SCHEMA: str = "tracopp_v2"
+    SUPABASE_SCHEMA: str = Field("manthan_rag", validation_alias=_alias("DB_SCHEMA", "SUPABASE_SCHEMA"))
     SUPABASE_URL: str = ""
     SUPABASE_ANON_KEY: str = ""
     SUPABASE_SERVICE_KEY: str = ""
-    SUPABASE_STORAGE_BUCKET: str = "rag-documents"
+    SUPABASE_STORAGE_BUCKET: str = Field("manthan-rag-docs", validation_alias=_alias("STORAGE_BUCKET", "SUPABASE_STORAGE_BUCKET"))
     DB_SSLMODE: str = "require"
+    # Max connections per process (API and each worker). Keep small on a shared server.
+    DB_POOL_MAX: int = 5
     # backend/.env carries the DB connection only as DATABASE_URL (used directly by
     # backend/ARIA/SAGE) — SUPABASE_HOST/PORT/USER/PASSWORD/DB above are never set
     # there. Declared here so the fallback validator below can parse it.
     DATABASE_URL: str = ""
 
     # ── CDAC Gemma 4 ──────────────────────────────────────────
-    GEMMA4_BASE_URL: str = ""
-    GEMMA4_API_KEY: str = ""
-    GEMMA4_MODEL_NAME: str = "gemma-4-27b-it"
+    GEMMA4_BASE_URL: str = Field("", validation_alias=_alias("LLM_BASE_URL", "GEMMA4_BASE_URL"))
+    GEMMA4_API_KEY: str = Field("", validation_alias=_alias("LLM_API_KEY", "GEMMA4_API_KEY"))
+    GEMMA4_MODEL_NAME: str = Field("gemma-4-27b-it", validation_alias=_alias("LLM_MODEL", "GEMMA4_MODEL_NAME"))
     GEMMA4_TIMEOUT_SECONDS: int = 120          # read timeout (model generation)
     GEMMA4_CONNECT_TIMEOUT_SECONDS: int = 10   # fail fast when the endpoint is down
     GEMMA4_MAX_RETRIES: int = 2                # retries on transient 5xx / connect errors
@@ -66,7 +78,7 @@ class Settings(BaseSettings):
     # ── Embeddings / Reranker ─────────────────────────────────
     # Key name kept as BGE_MODEL_NAME for env/compose compatibility; the model is
     # intfloat/e5-large-v2 (Microsoft) since 21 Sep 2026 — see embedding_service.py.
-    BGE_MODEL_NAME: str = "intfloat/e5-large-v2"
+    BGE_MODEL_NAME: str = Field("intfloat/e5-large-v2", validation_alias=_alias("EMBEDDING_MODEL", "BGE_MODEL_NAME"))
     RERANKER_NAME: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     EMBEDDING_BATCH_SIZE: int = 32
     EMBEDDING_DEVICE: str = "cpu"
@@ -467,6 +479,16 @@ class Settings(BaseSettings):
                 self.SUPABASE_DB = db_name
         return self
 
+    @model_validator(mode="after")
+    def _guard_schema(self):
+        """Refuse to start against a platform schema (shared database server)."""
+        if self.SUPABASE_SCHEMA.strip().lower() in _FORBIDDEN_SCHEMAS:
+            raise ValueError(
+                f"DB_SCHEMA={self.SUPABASE_SCHEMA!r} is not allowed; "
+                "use this service's own schema (default manthan_rag)."
+            )
+        return self
+
     @property
     def database_url(self) -> str:
         return (
@@ -479,21 +501,21 @@ class Settings(BaseSettings):
         return self.MAX_UPLOAD_SIZE_MB * 1024 * 1024
 
     model_config = SettingsConfigDict(
-        # Absolute path (cwd-independent) to the ONE shared env file.
-        env_file=str(MANTHAN_ENV_FILE),
+        env_file=str(RAG_ENV_FILE),
         env_file_encoding="utf-8",
         extra="ignore",
+        populate_by_name=True,
     )
 
 
 settings = Settings()
 
-# HuggingFace offline flags live in backend/.env but are read by HF libraries
-# from process env, not pydantic — bridge them so model loads skip network
-# checks (models are already cached locally; without this HF retries ~30s).
+# HuggingFace offline flags may live in the env file but are read by HF
+# libraries from process env, not pydantic — bridge them so model loads skip
+# network checks (models are pre-downloaded into the models volume).
 import os as _os
 from dotenv import dotenv_values as _dotenv_values
-_env = _dotenv_values(str(MANTHAN_ENV_FILE))
+_env = _dotenv_values(str(RAG_ENV_FILE)) if RAG_ENV_FILE.exists() else {}
 for _k in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE"):
     if _env.get(_k):
         _os.environ.setdefault(_k, _env[_k])
