@@ -1,5 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // /retrieve can take several seconds (model pick + search); the default proxy timeout is 30 s.
+  experimental: { proxyTimeout: 180_000 },
   async rewrites() {
     return {
       // `beforeFiles` is empty — nothing needs to be rewritten before

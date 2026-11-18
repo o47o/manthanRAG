@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { apiClient } from "@/lib/api-client";
 import { RefreshCw, Loader2 } from "lucide-react";
 import { useDocuments } from "@/hooks/useDocuments";
 import { DocumentTable } from "@/components/documents/DocumentTable";
@@ -26,8 +28,11 @@ export default function DocumentsPage() {
   const [typeFilter, setTypeFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [page, setPage] = useState(1);
+  const [collectionFilter, setCollectionFilter] = useState("");
+  const { data: collections } = useQuery({ queryKey: ["collections"], queryFn: apiClient.listCollections });
 
   const { data, isLoading, isFetching, refetch } = useDocuments({
+    collection_id: collectionFilter ? Number(collectionFilter) : undefined,
     page,
     limit: 20,
     document_type: typeFilter || undefined,
@@ -54,6 +59,16 @@ export default function DocumentsPage() {
 
       {/* Filters */}
       <div className="flex gap-3 flex-wrap">
+        <select
+          value={collectionFilter}
+          onChange={(e) => { setCollectionFilter(e.target.value); setPage(1); }}
+          className="text-sm border border-gray-200 dark:border-gray-800 rounded-md px-3 py-1.5 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-400"
+        >
+          <option value="">All collections</option>
+          {(collections ?? []).map((c) => (
+            <option key={c.id} value={c.id}>{c.name}</option>
+          ))}
+        </select>
         <select
           value={typeFilter}
           onChange={(e) => { setTypeFilter(e.target.value); setPage(1); }}

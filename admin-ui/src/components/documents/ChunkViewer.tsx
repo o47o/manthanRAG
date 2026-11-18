@@ -14,7 +14,8 @@ import {
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "@/lib/utils";
-import type { DocumentType } from "@/lib/types";
+import type { ChunkStore, DocumentType } from "@/lib/types";
+import { apiClient } from "@/lib/api-client";
 
 /** Per-semantic-type colour scheme — badge + left accent border, for fast visual scanning. */
 const TYPE_STYLES: Record<string, { badge: string; border: string }> = {
@@ -225,10 +226,7 @@ export function ChunkViewer({
 
   const { data, isLoading } = useQuery({
     queryKey: ["chunks", documentId, activeTab, page],
-    queryFn: () =>
-      fetch(
-        `/api/v1/documents/${documentId}/chunks?store=${activeTab}&page=${page}&limit=${PAGE_SIZE}`
-      ).then((r) => r.json()),
+    queryFn: () => apiClient.getDocumentChunks(documentId, activeTab as ChunkStore, page, PAGE_SIZE),
     enabled: tabs.length > 0,
   });
 
@@ -321,7 +319,7 @@ export function ChunkViewer({
       {!isLoading && (data?.total ?? 0) > PAGE_SIZE && (
         <div className="flex items-center justify-between pt-2 border-t border-gray-100 dark:border-gray-800 text-xs text-gray-500 dark:text-gray-400">
           <span>
-            {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, data.total)} of {data.total}
+            {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, (data?.total ?? 0))} of {(data?.total ?? 0)}
           </span>
           <div className="flex gap-1">
             <button
@@ -332,7 +330,7 @@ export function ChunkViewer({
               <ChevronLeft className="h-3.5 w-3.5" /> Prev
             </button>
             <button
-              disabled={page * PAGE_SIZE >= data.total}
+              disabled={page * PAGE_SIZE >= (data?.total ?? 0)}
               onClick={() => { setPage(page + 1); setExpanded(new Set()); }}
               className="inline-flex items-center gap-1 px-2 py-1 rounded border border-gray-200 dark:border-gray-700 disabled:opacity-40 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
             >

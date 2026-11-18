@@ -1,8 +1,9 @@
+import { AuthError, authHeaders } from "./auth";
 import type {
-  AddChatMessageRequest,
-  ChatSession,
-  ChatSessionDetail,
+  ApiKeyCreated,
+  ApiKeyInfo,
   ChunksResponse,
+  Collection,
   ChunkStore,
   DocumentDetail,
   DocumentImagesResponse,
@@ -15,18 +16,31 @@ import type {
   PipelineCreateResponse,
   PipelineDetail,
   PipelineRunListResponse,
-  QueryRequest,
-  QueryResponse,
-  UploadResponse,
+  RetrieveRequest,
+  RetrieveResponse,
 } from "./types";
 
 // Use empty base so requests go through Next.js proxy (/api/* → backend).
 // Direct http://localhost:8000 bypasses the proxy and hits CORS on non-3000 ports.
 const BASE = typeof window !== "undefined" ? "" : (process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000");
 
+async function fail(res: Response, prefix = "API"): Promise<never> {
+  const body = await res.text();
+  let detail = body;
+  try {
+    const j = JSON.parse(body);
+    if (j && typeof j.detail === "string") detail = j.detail;
+  } catch {
+    /* not JSON */
+  }
+  if (res.status === 401 || res.status === 403) throw new AuthError(res.status, detail);
+  throw new Error(`${prefix} ${res.status}: ${detail}`);
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...init?.headers },
+    ...init,
+    headers: { "Content-Type": "application/json", ...authHeaders(), ...init?.headers },
     // Our polling hooks (useDocumentImages, usePipeline, etc.) hit the exact
     // same URL every 1-1.2s while a run is live. Without this, the browser's
     // HTTP cache can serve back the FIRST response it saw for that URL (e.g.
@@ -35,51 +49,28 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     // React Query's own refetch logic is irrelevant once that happens — the
     // fetch never reaches the network. Always bypass the HTTP cache.
     cache: "no-store",
-    ...init,
   });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`API ${res.status}: ${body}`);
-  }
+  if (!res.ok) await fail(res);
   return res.json() as Promise<T>;
 }
 
 export const apiClient = {
-  uploadDocument: async (file: File): Promise<UploadResponse> => {
-    const form = new FormData();
-    form.append("file", file);
-    const res = await fetch(`${BASE}/api/v1/ingest/upload`, {
-      method: "POST",
-      body: form,
-    });
-    if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`Upload failed ${res.status}: ${body}`);
-    }
-    return res.json();
-  },
-
   createPipeline: async (
     input: PipelineCreateInput
   ): Promise<PipelineCreateResponse> => {
     const form = new FormData();
     form.append("name", input.name);
     if (input.description) form.append("description", input.description);
-    form.append("source", input.source ?? "local");
-    if (input.domain) form.append("domain", input.domain);
-    if (input.sub_domain) form.append("sub_domain", input.sub_domain);
-    if (input.category) form.append("category", input.category);
-    if (input.sub_category) form.append("sub_category", input.sub_category);
+    form.append("source", input.source ?? "admin-ui");
+    form.append("collection_id", String(input.collection_id));
     for (const file of input.files) form.append("files", file);
 
     const res = await fetch(`${BASE}/api/v1/ingest/pipeline`, {
       method: "POST",
       body: form,
+      headers: authHeaders(),
     });
-    if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`Pipeline failed ${res.status}: ${body}`);
-    }
+    if (!res.ok) await fail(res, "Upload failed");
     return res.json();
   },
 
@@ -101,8 +92,10 @@ export const apiClient = {
     limit?: number;
     status?: string;
     document_type?: string;
+    collection_id?: number;
   }): Promise<DocumentListResponse> => {
     const qs = new URLSearchParams();
+    if (params?.collection_id) qs.set("collection_id", String(params.collection_id));
     if (params?.page) qs.set("page", String(params.page));
     if (params?.limit) qs.set("limit", String(params.limit));
     if (params?.status) qs.set("status", params.status);
@@ -153,50 +146,38 @@ export const apiClient = {
   getHealth: (): Promise<HealthResponse> =>
     request<HealthResponse>("/api/v1/health"),
 
-  submitQuery: (body: QueryRequest): Promise<QueryResponse> =>
-    request<QueryResponse>("/api/v1/query", {
+  // ── Retrieval (what the customer's application calls) ─────────────────────
+
+  retrieve: (body: RetrieveRequest): Promise<RetrieveResponse> =>
+    request<RetrieveResponse>("/api/v1/retrieve", {
       method: "POST",
       body: JSON.stringify(body),
     }),
 
-  // ── Chat sessions ──────────────────────────────────────────────────────────
+  // ── Admin: collections and keys ───────────────────────────────────────────
 
-  listChatSessions: (limit = 30): Promise<ChatSession[]> =>
-    request<ChatSession[]>(`/api/v1/chats?limit=${limit}`),
+  listCollections: (): Promise<Collection[]> =>
+    request<Collection[]>("/api/v1/admin/collections"),
 
-  createChatSession: (body: { title?: string }): Promise<ChatSession> =>
-    request<ChatSession>("/api/v1/chats", {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
+  createCollection: (body: { name: string; description?: string }): Promise<Collection> =>
+    request<Collection>("/api/v1/admin/collections", { method: "POST", body: JSON.stringify(body) }),
 
-  getChatSession: (sessionId: string): Promise<ChatSessionDetail> =>
-    request<ChatSessionDetail>(`/api/v1/chats/${sessionId}`),
+  updateCollection: (
+    id: number,
+    body: { name?: string; description?: string; is_active?: boolean },
+  ): Promise<Collection> =>
+    request<Collection>(`/api/v1/admin/collections/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
 
-  addChatMessage: (
-    sessionId: string,
-    message: AddChatMessageRequest,
-  ): Promise<{ id: string; created_at: string }> =>
-    request(`/api/v1/chats/${sessionId}/messages`, {
-      method: "POST",
-      body: JSON.stringify(message),
-    }),
+  listKeys: (): Promise<ApiKeyInfo[]> => request<ApiKeyInfo[]>("/api/v1/admin/keys"),
 
-  deleteChatSession: (sessionId: string): Promise<{ deleted: boolean }> =>
-    request(`/api/v1/chats/${sessionId}`, { method: "DELETE" }),
+  createKey: (body: {
+    name: string;
+    is_admin: boolean;
+    collection_ids: number[];
+    expires_at?: string | null;
+  }): Promise<ApiKeyCreated> =>
+    request<ApiKeyCreated>("/api/v1/admin/keys", { method: "POST", body: JSON.stringify(body) }),
 
-  updateChatSession: (sessionId: string, title: string): Promise<{ id: string; title: string }> =>
-    request(`/api/v1/chats/${sessionId}`, {
-      method: "PATCH",
-      body: JSON.stringify({ title }),
-    }),
-
-  generateChatTitle: (sessionId: string): Promise<{ title: string }> =>
-    request(`/api/v1/chats/${sessionId}/generate-title`, { method: "POST" }),
-
-  toggleMessagePin: (sessionId: string, messageId: string, isPinned: boolean): Promise<{ status: string; is_pinned: boolean }> =>
-    request(`/api/v1/chats/${sessionId}/messages/${messageId}/pin`, {
-      method: "PATCH",
-      body: JSON.stringify({ is_pinned: isPinned }),
-    }),
+  revokeKey: (id: number): Promise<ApiKeyInfo> =>
+    request<ApiKeyInfo>(`/api/v1/admin/keys/${id}/revoke`, { method: "POST" }),
 };

@@ -23,6 +23,11 @@ async function proxy(req: NextRequest, pathSegments?: string[]) {
   const headers: Record<string, string> = {};
   const ct = req.headers.get("content-type");
   if (ct) headers["content-type"] = ct;
+  // API key: the backend needs it on every ingest call.
+  for (const h of ["x-api-key", "authorization"]) {
+    const v = req.headers.get(h);
+    if (v) headers[h] = v;
+  }
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);

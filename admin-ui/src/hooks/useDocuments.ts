@@ -9,6 +9,7 @@ export function useDocuments(params?: {
   limit?: number;
   status?: string;
   document_type?: string;
+  collection_id?: number;
 }) {
   return useQuery({
     queryKey: ["documents", params],

@@ -4,7 +4,7 @@
 # private network. Configuration: backend/.env (see backend/.env.example).
 #
 #   docker compose run --rm migrate          # create / upgrade the database schema
-#   docker compose up -d                     # API + worker + redis
+#   docker compose up -d                     # API + worker + redis + admin console
 #   docker compose --profile graph up -d     # also Neo4j for GraphRAG (set NEO4J_ENABLED=true)
 
 name: manthan-rag
@@ -84,6 +84,19 @@ services:
       timeout: 20s
       retries: 5
       start_period: 180s
+
+  admin-ui:
+    build:
+      context: ./admin-ui
+      args:
+        API_URL: http://api:8000
+    image: manthan-rag-admin:latest
+    restart: unless-stopped
+    networks: [rag]
+    ports:
+      - "${ADMIN_BIND:-127.0.0.1}:${ADMIN_PORT:-3000}:3000"
+    depends_on:
+      api: { condition: service_healthy }
 
   neo4j:
     image: neo4j:5.26-community

@@ -4,7 +4,7 @@
 # - Image: our code on top of the platform's RAG image (same packages) — docker/Dockerfile.dev.
 # - Models: the platform's model volumes, mounted READ-ONLY (no second 5 GB download, nothing written).
 # - Memory caps keep our containers from pushing the production containers into the OOM killer.
-# - API only on 127.0.0.1:8100.
+# - API only on 127.0.0.1:8100, admin console on 127.0.0.1:3100.
 x-dev: &dev
   build:
     context: .
@@ -27,6 +27,10 @@ services:
     command: ["celery", "-A", "app.core.background_tasks", "worker", "--loglevel=info",
               "-Q", "ingestion,parse,embed,graph", "--concurrency=1"]
     mem_limit: 3500m
+  admin-ui:
+    ports: !override
+      - "127.0.0.1:3100:3000"
+    mem_limit: 512m
   migrate:
     <<: *dev
   models:

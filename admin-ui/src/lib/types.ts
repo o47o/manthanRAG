@@ -73,11 +73,8 @@ export type PipelineRunStatus = "empty" | "running" | "completed" | "failed";
 export interface PipelineCreateInput {
   name: string;
   description?: string;
-  source?: PipelineSource;
-  domain?: string;
-  sub_domain?: string;
-  category?: string;
-  sub_category?: string;
+  source?: string;
+  collection_id: number;
   files: File[];
 }
 
@@ -85,8 +82,9 @@ export interface PipelineFileResult {
   document_id: string;
   job_id: string | null;
   filename: string;
-  status: "queued" | "failed";
+  status: "queued" | "failed" | "already_current";
   error: string | null;
+  version_no?: number | null;
 }
 
 export interface PipelineCreateResponse {
@@ -356,4 +354,93 @@ export interface AddChatMessageRequest {
   notes?: string;
   citations?: CitationItem[];
   is_pinned?: boolean;
+}
+
+// ── Standalone service: collections, keys, retrieval ─────────────────────────
+
+export interface Collection {
+  id: number;
+  name: string;
+  description: string | null;
+  is_active: boolean;
+  document_count: number;
+  created_at: string;
+}
+
+export interface ApiKeyInfo {
+  id: number;
+  name: string;
+  key_prefix: string;
+  is_admin: boolean;
+  collection_ids: number[];
+  created_at: string;
+  last_used_at: string | null;
+  expires_at: string | null;
+  revoked_at: string | null;
+}
+
+export interface ApiKeyCreated extends ApiKeyInfo {
+  api_key: string;
+}
+
+export interface RetrieveRequest {
+  query: string;
+  top_k?: number;
+  collection_ids?: number[];
+  document_ids?: string[];
+  auto_scope?: boolean;
+  full_document?: boolean;
+  report_family?: string | null;
+  previous_report_family?: string | null;
+  use_doc_picker?: boolean | null;
+  add_related_tables?: boolean;
+  use_reranker?: boolean;
+  include_file_urls?: boolean;
+}
+
+export interface RetrieveHit {
+  rank: number;
+  score: number | null;
+  text: string;
+  store: string;
+  document: {
+    id: string | null;
+    name: string | null;
+    collection_id: number | null;
+    version_no: number | null;
+    document_type: string | null;
+    periods: string[];
+  };
+  page: number | null;
+  page_end: number | null;
+  section_title: string | null;
+  table_markdown: string | null;
+  clause_type: string | null;
+  risk_level: string | null;
+  image: { url: string | null; caption: string | null; ocr_text: string | null } | null;
+  file_url: string | null;
+  added: string | null;
+}
+
+export interface RetrieveScope {
+  applied: string[];
+  fallbacks: string[];
+  note: string | null;
+  documents: string[];
+  report_family: string | null;
+  picked_by: "rules" | "model" | "report_family" | null;
+  reason: string | null;
+  choices: { label: string; documents: number }[];
+}
+
+export interface RetrieveResponse {
+  query: string;
+  mode: "ranked" | "full_document" | "empty";
+  hits: RetrieveHit[];
+  scope: RetrieveScope;
+  total_candidates: number;
+  stores_searched: string[];
+  structured_result: Record<string, unknown> | null;
+  timings: Record<string, number> | null;
+  took_ms: number;
 }

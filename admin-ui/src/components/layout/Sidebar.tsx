@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Upload, FileText, MessageSquare, Database, Workflow, PanelLeftClose, PanelLeftOpen, Loader2, type LucideIcon } from "lucide-react";
+import { Upload, FileText, Search, Database, Workflow, FolderOpen, KeyRound, PanelLeftClose, PanelLeftOpen, Loader2, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "./ThemeToggle";
 import { useRunningPipelineCount } from "@/hooks/useDocuments";
@@ -16,10 +16,12 @@ interface NavItem {
 }
 
 const navItems: NavItem[] = [
+  { href: "/collections", label: "Collections", icon: FolderOpen },
+  { href: "/keys", label: "API keys", icon: KeyRound },
   { href: "/upload", label: "Upload", icon: Upload },
   { href: "/pipelines", label: "Pipelines", icon: Workflow },
   { href: "/documents", label: "Documents", icon: FileText },
-  { href: "/query", label: "Query", icon: MessageSquare },
+  { href: "/retrieve", label: "Retrieve tester", icon: Search },
 ];
 
 export function Sidebar() {
@@ -55,8 +57,8 @@ export function Sidebar() {
         >
           <Database className="h-6 w-6 flex-shrink-0 text-blue-600 dark:text-blue-400" />
           <div className="whitespace-nowrap">
-            <p className="text-sm font-bold text-gray-900 dark:text-gray-100">MANTHAN RAG</p>
-            <p className="text-xs text-gray-500 dark:text-gray-400">Enterprise Intelligence</p>
+            <p className="text-sm font-bold text-gray-900 dark:text-gray-100">Manthan RAG</p>
+            <p className="text-xs text-gray-500 dark:text-gray-400">Admin console</p>
           </div>
         </div>
 

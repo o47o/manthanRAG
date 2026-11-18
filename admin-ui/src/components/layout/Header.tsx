@@ -1,7 +1,9 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { LogOut } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
+import { clearApiKey } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
 export function Header() {
@@ -16,7 +18,7 @@ export function Header() {
   return (
     <header className="h-14 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between px-6 flex-shrink-0">
       <h1 className="text-sm font-semibold text-gray-700 dark:text-gray-200">
-        Enterprise Agentic RAG
+        Retrieval service
       </h1>
 
       <div className="flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
@@ -25,7 +27,7 @@ export function Header() {
             <StatusDot label="API" status={health.api} />
             <StatusDot label="DB" status={health.database} />
             <StatusDot label="Redis" status={health.redis} />
-            <StatusDot label="Gemma" status={health.gemma_endpoint} />
+            <StatusDot label="LLM" status={health.gemma_endpoint} />
             <StatusDot label="Neo4j" status={health.neo4j} />
           </>
         ) : isError ? (
@@ -33,6 +35,17 @@ export function Header() {
         ) : (
           <span className="text-gray-400 dark:text-gray-500">Checking system status…</span>
         )}
+        <button
+          type="button"
+          onClick={() => {
+            clearApiKey();
+            window.location.href = "/login";
+          }}
+          className="ml-2 flex items-center gap-1 rounded-md border border-gray-200 px-2 py-1 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800"
+          title="Forget the admin key in this tab"
+        >
+          <LogOut className="h-3.5 w-3.5" /> Sign out
+        </button>
       </div>
     </header>
   );

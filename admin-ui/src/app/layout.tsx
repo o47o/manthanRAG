@@ -2,14 +2,13 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
-import { Sidebar } from "@/components/layout/Sidebar";
-import { Header } from "@/components/layout/Header";
+import { AppShell } from "@/components/layout/AppShell";
 
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "MANTHAN RAG",
-  description: "Enterprise Agentic RAG — Multi-Retriever Document Intelligence",
+  title: "Manthan RAG Admin",
+  description: "Admin console for the Manthan RAG retrieval service",
 };
 
 export default function RootLayout({
@@ -29,13 +28,7 @@ export default function RootLayout({
       </head>
       <body className={inter.className}>
         <Providers>
-          <div className="flex h-screen bg-gray-50 dark:bg-gray-950">
-            <Sidebar />
-            <div className="flex flex-col flex-1 overflow-hidden">
-              <Header />
-              <main className="flex-1 overflow-y-auto p-6">{children}</main>
-            </div>
-          </div>
+          <AppShell>{children}</AppShell>
         </Providers>
       </body>
     </html>
