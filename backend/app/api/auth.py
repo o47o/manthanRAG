@@ -20,7 +20,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional
 
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, HTTPException, status
+from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 
 from app.db.connection import get_db
 
@@ -29,6 +30,12 @@ logger = logging.getLogger(__name__)
 KEY_PREFIX = "mrag_"
 _CACHE_TTL_SECONDS = 30
 _LAST_USED_WRITE_SECONDS = 300
+
+# Registered as OpenAPI security schemes so /api/docs shows the "Authorize" button.
+# auto_error=False: a missing key is answered by require_key with our own 401.
+_api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False,
+                               description="API key (mrag_...). Create one with scripts/create_api_key.py.")
+_bearer = HTTPBearer(auto_error=False, description="Same API key as a Bearer token.")
 
 _cache: dict[str, tuple[float, Optional["Principal"]]] = {}
 _last_used_written: dict[int, float] = {}
@@ -94,19 +101,19 @@ def _touch_last_used(key_id: int) -> None:
         logger.warning("last_used_at update failed for key %s: %s", key_id, exc)
 
 
-def _extract_key(x_api_key: Optional[str], authorization: Optional[str]) -> Optional[str]:
+def _extract_key(x_api_key: Optional[str], bearer: Optional[HTTPAuthorizationCredentials]) -> Optional[str]:
     if x_api_key:
         return x_api_key.strip()
-    if authorization and authorization.lower().startswith("bearer "):
-        return authorization[7:].strip()
+    if bearer and bearer.credentials:
+        return bearer.credentials.strip()
     return None
 
 
 def require_key(
-    x_api_key: Optional[str] = Header(default=None, alias="X-API-Key"),
-    authorization: Optional[str] = Header(default=None),
+    x_api_key: Optional[str] = Depends(_api_key_header),
+    bearer: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
 ) -> Principal:
-    raw = _extract_key(x_api_key, authorization)
+    raw = _extract_key(x_api_key, bearer)
     if not raw:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing API key",
                             headers={"WWW-Authenticate": "Bearer"})
