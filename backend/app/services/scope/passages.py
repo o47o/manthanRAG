@@ -15,17 +15,17 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 
+from app.config import settings
 from app.db.connection import get_db
 
 logger = logging.getLogger(__name__)
 
-FULL_DOC_MAX_DOCS = int(os.getenv("RETRIEVE_FULL_DOC_MAX_DOCS", "2"))
-FULL_DOC_MAX_CHARS = int(os.getenv("RETRIEVE_FULL_DOC_MAX_CHARS", "22000"))
-COMPANION_MAX_TABLES = int(os.getenv("RETRIEVE_COMPANION_MAX_TABLES", "3"))
-COMPANION_MAX_CHARS = int(os.getenv("RETRIEVE_COMPANION_MAX_CHARS", "9000"))
+FULL_DOC_MAX_DOCS = settings.RETRIEVE_FULL_DOC_MAX_DOCS
+FULL_DOC_MAX_CHARS = settings.RETRIEVE_FULL_DOC_MAX_CHARS
+COMPANION_MAX_TABLES = settings.RETRIEVE_COMPANION_MAX_TABLES
+COMPANION_MAX_CHARS = settings.RETRIEVE_COMPANION_MAX_CHARS
 
 _SECTION_RE = re.compile(r"^\s*Context:\s*([^\n]+)")
 _TITLE_IN_JSON = re.compile(r'"title"\s*:\s*"([^"]+)"')

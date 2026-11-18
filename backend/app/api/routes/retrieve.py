@@ -4,8 +4,11 @@ The customer's own application (and LLM) builds the answer from the hits.
 
 Flow (ported from the Manthan platform's RAVEN node):
   1. Allowed documents = the API key's collections (+ the caller's filters). Fail closed.
-  2. Question scope (services/scope/doc_scope.py): a report id, a document name, a period or a
-     document type in the question narrows the search to matching documents inside (1).
+  2. Question scope, inside (1):
+     - a report id the question spells out: the rules decide (services/scope/doc_scope.py);
+     - a report kind the caller picked earlier (report_family): that kind, in the asked period;
+     - otherwise the model picks the document(s) from short cards of the likely candidates
+       (services/scope/doc_picker.py), with the rules as fallback when the model is off or fails.
   3. A short document the question names is returned WHOLE, in page order ("full_document" mode).
      Otherwise the engine runs ranked retrieval (retrieve-only, synthesize=False) inside (2).
   4. Cut-off table JSON is repaired and tables the passages refer to are added next to them.
@@ -26,7 +29,7 @@ from app.api.auth import Principal, allowed_document_ids, effective_collections,
 from app.api.routes.query import QueryRequest, query_documents
 from app.config import settings
 from app.db.connection import get_db
-from app.services.scope import doc_scope, passages as P
+from app.services.scope import doc_picker, doc_scope, passages as P
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -48,6 +51,11 @@ class RetrieveRequest(BaseModel):
         default=True, description="When the question names a short document, return all of it in page order.")
     report_family: Optional[str] = Field(
         default=None, description="The report kind the user picked from an earlier scope.choices list.")
+    previous_report_family: Optional[str] = Field(
+        default=None, description="scope.report_family from the previous question in the same conversation "
+                                  "(preferred when the new question names no other document).")
+    use_doc_picker: Optional[bool] = Field(
+        default=None, description="Let the model pick the document(s). Default: the server setting DOC_PICKER_ENABLED.")
     add_related_tables: bool = Field(
         default=True, description="Add tables the found passages refer to but the search did not return.")
     use_reranker: bool = True
@@ -98,6 +106,8 @@ class ScopeInfo(BaseModel):
     note: Optional[str] = None
     documents: list[str] = Field(default_factory=list, description="Documents searched after narrowing (max 20).")
     report_family: Optional[str] = None
+    picked_by: Optional[Literal["rules", "model", "report_family"]] = None
+    reason: Optional[str] = Field(None, description="The model's one-line reason when it picked.")
     choices: list[ScopeChoice] = Field(
         default_factory=list, description="Several kinds of report matched: ask the user, then resend with report_family.")
 
@@ -174,6 +184,37 @@ def _hits(passages: list[dict], include_urls: bool) -> list[Hit]:
     return out
 
 
+def _family_scope(family: str, allowed: list, rules: Optional[dict]) -> Optional[dict]:
+    """The report kind the user picked: every document of that kind in scope, narrowed to the
+    period the question asks for when any of them carries it."""
+    docs = [d for d in doc_scope._load_docs(allowed)
+            if doc_scope.family_of(d) == family or doc_scope._topic_overlap(family, d)]
+    if not docs:
+        return None
+    want = set(((rules or {}).get("asked") or {}).get("periods") or [])
+    in_period = [d for d in docs if want & set(d.get("periods") or [])] if want else []
+    docs = in_period or docs
+    return {"doc_ids": [d["id"] for d in docs], "applied": ["report family " + family], "fallbacks": [],
+            "documents": [d["original_filename"] for d in docs][:20], "family": family, "choices": []}
+
+
+async def _resolve_scope(req: "RetrieveRequest", allowed: list) -> tuple[Optional[dict], str]:
+    rules = await asyncio.to_thread(doc_scope.resolve, req.query, allowed, req.report_family,
+                                    req.previous_report_family)
+    if rules and any(str(a).startswith("report ") for a in rules.get("applied") or []):
+        return rules, "rules"                      # exact report id: no guessing needed
+    if req.report_family:
+        fam = await asyncio.to_thread(_family_scope, req.report_family, allowed, rules)
+        if fam:
+            return fam, "report_family"
+    use_picker = doc_picker.ENABLED if req.use_doc_picker is None else req.use_doc_picker
+    if use_picker:
+        picked = await doc_picker.pick(req.query, allowed, rules, None, req.previous_report_family)
+        if picked is not None:
+            return picked, "model"
+    return rules, "rules"
+
+
 @router.post("/retrieve", response_model=RetrieveResponse)
 async def retrieve(req: RetrieveRequest, principal: Principal = Depends(require_key)):
     start = time.time()
@@ -194,7 +235,7 @@ async def retrieve(req: RetrieveRequest, principal: Principal = Depends(require_
     search_ids = allowed
     named_document = False
     if req.auto_scope:
-        res = await asyncio.to_thread(doc_scope.resolve, req.query, allowed, req.report_family)
+        res, picked_by = await _resolve_scope(req, allowed)
         if res:
             allowed_set = set(allowed)
             narrowed = [d for d in (res.get("doc_ids") or []) if d in allowed_set]
@@ -204,6 +245,8 @@ async def retrieve(req: RetrieveRequest, principal: Principal = Depends(require_
                 note=doc_scope.fallback_note(res) or None,
                 documents=list(res.get("documents") or []) if narrowed else [],
                 report_family=res.get("family"),
+                picked_by=picked_by if (narrowed or res.get("choices")) else None,
+                reason=(res.get("picker") or {}).get("reason") or None,
                 choices=[ScopeChoice(**c) for c in (res.get("choices") or [])],
             )
             if narrowed:

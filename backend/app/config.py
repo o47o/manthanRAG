@@ -38,6 +38,17 @@ class Settings(BaseSettings):
     DB_POOL_MAX: int = 5
     # Upper bound for /api/v1/retrieve top_k.
     RETRIEVE_MAX_TOP_K: int = 50
+    # Whole named short document (services/scope/passages.py)
+    RETRIEVE_FULL_DOC_MAX_DOCS: int = 2
+    RETRIEVE_FULL_DOC_MAX_CHARS: int = 22000
+    # Tables added next to the passage that refers to them
+    RETRIEVE_COMPANION_MAX_TABLES: int = 3
+    RETRIEVE_COMPANION_MAX_CHARS: int = 9000
+    # Model picks the document a question is about (services/scope/doc_picker.py)
+    DOC_PICKER_ENABLED: bool = True
+    DOC_PICKER_MAX_CANDIDATES: int = 20
+    DOC_PICKER_SEARCH_K: int = 20
+    DOC_PICKER_TIMEOUT_SECONDS: float = 45.0
     # backend/.env carries the DB connection only as DATABASE_URL (used directly by
     # backend/ARIA/SAGE) — SUPABASE_HOST/PORT/USER/PASSWORD/DB above are never set
     # there. Declared here so the fallback validator below can parse it.

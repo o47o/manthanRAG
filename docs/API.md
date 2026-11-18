@@ -82,6 +82,8 @@ A document outside the key's scope answers `404`.
   "auto_scope": true,
   "full_document": true,
   "report_family": null,
+  "previous_report_family": null,
+  "use_doc_picker": null,
   "add_related_tables": true,
   "use_reranker": true,
   "include_file_urls": false
@@ -98,6 +100,17 @@ When the question names something precise, the search is first narrowed to the m
 4. A document type: SOP or procedure, policy, report, invoice or agreement.
 
 A filter that matches no document is dropped. `scope.fallbacks` lists it, and `scope.note` gives one sentence for the user.
+
+**Model pick (`DOC_PICKER_ENABLED`, on by default; `use_doc_picker` overrides it per call).** Unless the question spells out a report id, the model chooses the document(s). It sees short cards for up to 20 likely candidates: the documents the search ranks highest, the documents whose names share words with the question, and the documents the rules chose. Each card shows the name, title, type, periods and section and table headings.
+
+The model can do one of three things:
+- **Pick** the document(s) the question is about. Other copies come along, and so do other editions when the question names no period.
+- **Ask**: return `scope.choices` when two different documents fit equally.
+- **Search everything** when the question is general.
+
+The pick costs one extra search plus one LLM call on your endpoint. If the model is off, unreachable or slow (`DOC_PICKER_TIMEOUT_SECONDS`), the rules above decide. `scope.picked_by` is `rules`, `model` or `report_family`. `scope.reason` holds the model's one-line reason.
+
+`previous_report_family`: send `scope.report_family` from the previous question in the same conversation. When the new question names no other document, the model prefers that one.
 
 **Whole document.** When the question names a short document (up to 2 documents, about 22,000 characters), `mode` is `full_document`. All of its text, tables and clauses come back in page order instead of the top-k passages.
 
