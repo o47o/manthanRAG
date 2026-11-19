@@ -32,7 +32,9 @@ services:
       - "127.0.0.1:3100:3000"
     mem_limit: 512m
   neo4j:
-    mem_limit: 1g
+    # heap 512 MB + page cache 256 MB + JVM overhead (threads, network buffers) ≈ 1 GB;
+    # a 1 GB cap was OOM-killed under graph writes on 19 Nov.
+    mem_limit: 1536m
   migrate:
     <<: *dev
   models:

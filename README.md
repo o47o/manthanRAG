@@ -74,7 +74,7 @@ sudo docker compose -f docker-compose.yml -f docker-compose.dev.yml exec -T api 
 - The dev image adds only this repo's code on top of the platform's RAG image (same packages), and
   mounts the platform's model volumes read-only. Memory is capped (api 2.5 GB, worker 3.5 GB,
   admin-ui 512 MB) so these containers cannot push the production containers into the OOM killer.
-- Knowledge graph: our own Neo4j container (`--profile graph`, 1 GB cap, no host ports). The
+- Knowledge graph: our own Neo4j container (`--profile graph`, 1.5 GB cap, no host ports, usage reporting off). The
   platform's Neo4j is Community edition (one database only) and is never shared.
 - The dev database is the shared Supabase project, schema `manthan_rag`, bucket `manthan-rag-docs`.
   Never point this service at the platform's `tracopp_v2` schema or `rag-documents` bucket.
@@ -92,7 +92,7 @@ How this service runs today on the shared Manthan AWS server (`13.126.161.22`, E
 | `manthan-rag-worker-1` | `manthan-rag:dev` | — | 3.5 GB | Celery ingestion worker, queues `ingestion,parse,embed,graph`, concurrency 1 |
 | `manthan-rag-admin-ui-1` | `manthan-rag-admin:latest` | `127.0.0.1:3100` | 512 MB | Next.js admin console |
 | `manthan-rag-redis-1` | `redis:7-alpine` | — | — | Celery broker / results |
-| `manthan-rag-neo4j-1` | `neo4j:5.26-community` | — | 1 GB (heap 512 MB, page cache 256 MB) | Knowledge graph (our own; not the platform's) |
+| `manthan-rag-neo4j-1` | `neo4j:5.26-community` | — | 1.5 GB (heap 512 MB, page cache 256 MB) | Knowledge graph (our own; not the platform's); usage reporting off |
 
 - `manthan-rag:dev` = this repo's `backend/` copied on top of the platform's `datamind-rag:latest`
   image (identical Python packages, Python 3.11, torch 2.5.1 CPU, Docling, Tesseract), so no second 3 GB install.
