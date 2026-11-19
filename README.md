@@ -168,6 +168,7 @@ have no graph yet and need `POST /api/v1/graph/rebuild/{document_id}`.
 | `DOC_PICKER_ENABLED` | true | The model picks the document a question is about |
 | `RETRIEVE_MAX_TOP_K` | 50 | Upper limit for `top_k` |
 | `GRAPHRAG_ENABLED` / `MULTI_HOP_MAX_RELATED_DOCS` | true / 5 | Graph facts and related-document expansion (the platform runs 1 loop / 0 related docs to save memory) |
+| `GRAPH_EXTRACTION_MAX_TOKENS` | 2048 | Output tokens for per-passage entity/relationship extraction (was a fixed 768; long passages were cut off — fixed 19 Nov) |
 | `RECORD_EXTRACTION_ENABLED` | true | Records extracted after each document |
 | `GEMMA4_MAX_CONCURRENT` | 5 | Parallel LLM calls per process |
 | `MAX_UPLOAD_SIZE_MB` | 100 | Per file |
@@ -199,5 +200,8 @@ Open:
 - Public HTTPS access (route through a reverse proxy) is not set up; the API listens on localhost only.
 - PyMuPDF (AGPL-3.0) must be replaced or licensed before images ship to customers.
 - `TABLE_VLM_RECONSTRUCT` is defined but not checked by the ingestion code (the Gemma table re-read always runs).
-- Graph rebuild needed for documents completed before Neo4j was switched on.
+- Graph rebuild needed for documents completed before 19 Nov 10:35 UTC (before Neo4j was switched on, or
+  before the extraction fix): `POST /api/v1/graph/rebuild/{document_id}`.
+- The same graph-extraction cut-off bug exists in the platform engine
+  (`Agents/RAG/backend/app/services/graph_extraction_service.py`, `max_tokens=768`); fixed only here.
 - Later phases: licence check, signed images, opt-in telemetry, support access.
