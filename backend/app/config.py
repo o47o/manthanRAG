@@ -49,6 +49,8 @@ class Settings(BaseSettings):
     DOC_PICKER_MAX_CANDIDATES: int = 20
     DOC_PICKER_SEARCH_K: int = 20
     DOC_PICKER_TIMEOUT_SECONDS: float = 45.0
+    # Output tokens for the per-passage entity/relationship extraction (knowledge graph)
+    GRAPH_EXTRACTION_MAX_TOKENS: int = 2048
     # backend/.env carries the DB connection only as DATABASE_URL (used directly by
     # backend/ARIA/SAGE) — SUPABASE_HOST/PORT/USER/PASSWORD/DB above are never set
     # there. Declared here so the fallback validator below can parse it.

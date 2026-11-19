@@ -83,8 +83,58 @@ def _call_gemma_graph(text: str, max_entities: int, max_relationships: int) -> d
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": text[:6000]},
     ]
-    raw = chat(messages=messages, max_tokens=768, temperature=0.0)
+    # 768 tokens cut off replies for passages over ~2,400 characters (15 entities + 20
+    # relationships with descriptions need ~750-900 tokens) — every long passage then lost
+    # all its relationships (measured 19 Nov 2026: 5 of 5 long passages truncated).
+    raw = chat(messages=messages, max_tokens=settings.GRAPH_EXTRACTION_MAX_TOKENS, temperature=0.0)
     return _parse_graph_response(raw)
+
+
+def _salvage_truncated(text: str) -> dict | None:
+    """Recover a reply cut off mid-JSON: keep every COMPLETE entity / relationship object
+    up to the cut and close the open arrays and the top-level object.
+
+    Scans the text once, tracking strings and bracket nesting. Each time an object that is
+    an element of a top-level array closes, the prefix up to there is a valid cut point.
+    """
+    start = text.find("{")
+    if start < 0:
+        return None
+    stack: list[str] = []
+    in_str = esc = False
+    best: tuple[int, list[str]] | None = None
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch in "{[":
+            stack.append(ch)
+        elif ch in "}]":
+            if not stack:
+                return None
+            stack.pop()
+            if not stack:
+                return None  # complete object: the normal parser handles it
+            # element object of a top-level array closed: {"entities": [ {...} <- here
+            if ch == "}" and stack == ["{", "["]:
+                best = (i, list(stack))
+    if best is None:
+        return None
+    end, open_stack = best
+    closing = "".join("]" if c == "[" else "}" for c in reversed(open_stack))
+    try:
+        obj = json.loads(text[start:end + 1] + closing)
+    except json.JSONDecodeError:
+        return None
+    return obj if isinstance(obj, dict) else None
 
 
 def _parse_graph_response(raw: str) -> dict | None:
@@ -99,12 +149,17 @@ def _parse_graph_response(raw: str) -> dict | None:
         obj = json.loads(cleaned)
     except json.JSONDecodeError:
         m = re.search(r"\{.*\}", cleaned, re.DOTALL)
-        if not m:
-            return None
-        try:
-            obj = json.loads(m.group())
-        except json.JSONDecodeError:
-            return None
+        if m:
+            try:
+                obj = json.loads(m.group())
+            except json.JSONDecodeError:
+                obj = None
+        if obj is None:
+            obj = _salvage_truncated(cleaned)
+            if obj is None:
+                return None
+            logger.info("Graph extraction reply was cut off — kept %d entities, %d relationships",
+                        len(obj.get("entities") or []), len(obj.get("relationships") or []))
 
     if not isinstance(obj, dict):
         return None
