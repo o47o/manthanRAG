@@ -13,10 +13,13 @@ interface Props {
 
 /**
  * Compact drag-and-drop target matching the "Manage RAG Pipelines" design.
- * Backend ingestion accepts PDF, DOCX, PPTX, XLSX, HTML, and Markdown.
+ * Backend ingestion accepts PDF, DOCX, PPTX, XLSX, CSV, HTML, Markdown, TXT, JPG/JPEG and PNG
+ * (backend/app/api/routes/ingestion.py _EXT_TO_MIME — keep both lists in step).
  * The dropzone mirrors this on the client side to catch obvious mismatches
  * before the request is sent — the backend remains the authoritative gate.
  */
+const SUPPORTED_LABEL = "PDF, DOCX, PPTX, XLSX, CSV, HTML, MD, TXT, JPG, PNG";
+
 export function FileDropzone({ onFiles, disabled, maxSizeMB = 100 }: Props) {
   const [rejected, setRejected] = useState<string[]>([]);
 
@@ -33,7 +36,7 @@ export function FileDropzone({ onFiles, disabled, maxSizeMB = 100 }: Props) {
             if (reason?.code === "file-too-large")
               return `${r.file.name} — exceeds ${maxSizeMB} MB`;
             if (reason?.code === "file-invalid-type")
-              return `${r.file.name} — unsupported format (PDF, DOCX, PPTX, XLSX, HTML, MD)`;
+              return `${r.file.name} — unsupported format (${SUPPORTED_LABEL})`;
             return `${r.file.name} — ${reason?.message ?? "rejected"}`;
           })
         );
@@ -51,8 +54,12 @@ export function FileDropzone({ onFiles, disabled, maxSizeMB = 100 }: Props) {
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"],
       "text/html": [".html", ".htm"],
       "text/markdown": [".md"],
-      // Windows browsers often report .md files as text/plain instead of text/markdown
-      "text/plain": [".md"],
+      // Windows browsers often report .md / .csv files as text/plain or vnd.ms-excel
+      "text/plain": [".md", ".txt"],
+      "text/csv": [".csv"],
+      "application/vnd.ms-excel": [".csv"],
+      "image/jpeg": [".jpg", ".jpeg"],
+      "image/png": [".png"],
     },
     maxSize: maxSizeMB * 1024 * 1024,
     disabled,
@@ -80,7 +87,7 @@ export function FileDropzone({ onFiles, disabled, maxSizeMB = 100 }: Props) {
               : "Drag & drop files, or click to browse"}
           </p>
           <p className="text-sm text-gray-400 dark:text-gray-500">
-            PDF, DOCX, PPTX, XLSX, HTML, MD — up to {maxSizeMB} MB per file
+            {SUPPORTED_LABEL} — up to {maxSizeMB} MB per file
           </p>
         </div>
       </div>
