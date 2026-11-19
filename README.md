@@ -43,7 +43,7 @@ Copy `backend/.env.example` to `backend/.env` (environment variables override th
 | `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL` | Customer-supplied OpenAI-compatible LLM (base URL only; `/chat/completions` is added) |
 | `EMBEDDING_MODEL`, `RERANKER_NAME` | Embedding model and reranker (downloaded once into the `models` volume) |
 | `DOC_PICKER_ENABLED`, `RETRIEVE_MAX_TOP_K`, `RETRIEVE_FULL_DOC_*` | Retrieval behaviour (see `docs/API.md`) |
-| `NEO4J_ENABLED`, `NEO4J_*` | Optional knowledge graph (`--profile graph`) |
+| `NEO4J_ENABLED`, `NEO4J_PASSWORD` | Optional knowledge graph. Put them in the `.env` **next to `docker-compose.yml`** (read by compose), then start with `--profile graph` |
 
 ## Run (customer install)
 
@@ -62,7 +62,7 @@ scoped key for the customer application.
 ## Run (development on the shared Manthan server)
 
 ```bash
-sudo docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build redis api worker admin-ui
+sudo docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile graph up -d --build redis neo4j api worker admin-ui
 curl 127.0.0.1:8100/api/v1/health
 sudo docker compose -f docker-compose.yml -f docker-compose.dev.yml exec -T api \
     python scripts/create_api_key.py --name "Dev admin" --admin
@@ -74,6 +74,8 @@ sudo docker compose -f docker-compose.yml -f docker-compose.dev.yml exec -T api 
 - The dev image adds only this repo's code on top of the platform's RAG image (same packages), and
   mounts the platform's model volumes read-only. Memory is capped (api 2.5 GB, worker 3.5 GB,
   admin-ui 512 MB) so these containers cannot push the production containers into the OOM killer.
+- Knowledge graph: our own Neo4j container (`--profile graph`, 1 GB cap, no host ports). The
+  platform's Neo4j is Community edition (one database only) and is never shared.
 - The dev database is the shared Supabase project, schema `manthan_rag`, bucket `manthan-rag-docs`.
   Never point this service at the platform's `tracopp_v2` schema or `rag-documents` bucket.
 
